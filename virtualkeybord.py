@@ -1,109 +1,103 @@
 import cv2
-import cvzone
-from cvzone.HandTrackingModule import HandDetector
-from time import sleep
+import mediapipe as mp
 import numpy as np
 from pynput.keyboard import Controller
+from time import sleep
 
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-cap.set(3, 1280)
-cap.set(4, 720)
+# Initialize the keyboard
+keyboard = Controller()
 
-detector = HandDetector(detectionCon=int(0.8))
+# Define the keyboard layout
 keyboard_keys = [["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
-                  ["A", "S", "D", "F", "G", "H", "J", "K", "L", ";"],
-                  ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "/"]]
+                 ["A", "S", "D", "F", "G", "H", "J", "K", "L", ";"],
+                 ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "/"]]
 
 final_text = ""
 
+# Initialize MediaPipe Hand Detection
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.8)
+mp_draw = mp.solutions.drawing_utils
 
-keyboard = Controller()
-
-
-def draw(img, buttonList):
-    for button in buttonList:
-        x, y = button.pos
-        w, h = button.size
-        cvzone.cornerRect(img, (button.pos[0], button.pos[1],
-                                                   button.size[0],button.size[0]), 20 ,rt=0)
-        cv2.rectangle(img, button.pos, (int(x + w), int(y + h)), (255, 144, 30), cv2.FILLED)
-        cv2.putText(img, button.text, (x + 20, y + 65),
-                    cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
-    return img
-
-
-def transparent_layout(img, buttonList):
-    imgNew = np.zeros_like(img, np.uint8)
-    for button in buttonList:
-        x, y = button.pos
-        cvzone.cornerRect(imgNew, (button.pos[0], button.pos[1],
-                                                   button.size[0],button.size[0]), 20 ,rt=0)
-        cv2.rectangle(imgNew, button.pos, (x + button.size[0], y + button.size[1]),
-                                   (255, 144, 30), cv2.FILLED)
-        cv2.putText(imgNew, button.text, (x + 20, y + 65),
-                    cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
-
-    out = img.copy()
-    alpaha = 0.5
-    mask = imgNew.astype(bool)
-    print(mask.shape)
-    out[mask] = cv2.addWeighted(img, alpaha, imgNew, 1-alpaha, 0)[mask]
-    return out
-
-
+# Define a class for buttons on the virtual keyboard
 class Button():
     def __init__(self, pos, text, size=[85, 85]):
         self.pos = pos
         self.size = size
         self.text = text
 
+# Define a function to draw buttons on the screen
+def draw_buttons(img, buttonList):
+    for button in buttonList:
+        x, y = button.pos
+        w, h = button.size
+        cv2.rectangle(img, button.pos, (x + w, y + h), (255, 144, 30), cv2.FILLED)
+        cv2.putText(img, button.text, (x + 20, y + 65), cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
+    return img
 
+# Create a list of buttons for the keyboard
 buttonList = []
-# mybutton = Button([100, 100], "Q")
 for k in range(len(keyboard_keys)):
     for x, key in enumerate(keyboard_keys[k]):
         buttonList.append(Button([100 * x + 25, 100 * k + 50], key))
 
-
+# Start capturing video
+cap = cv2.VideoCapture(0)
+cap.set(3, 1280)
+cap.set(4, 720)
 
 while True:
     success, img = cap.read()
-    img = detector.findHands(img)
-    lmList, bboxInfo = detector.findPosition(img)
-    img = draw(img, buttonList)  # change the draw funtion to transparent_layout for transparent keys
+    img = cv2.flip(img, 1)  # Flip the image for better experience
 
-    if lmList:
-        for button in buttonList:
-            x, y = button.pos
-            w, h = button.size
+    # Convert the image to RGB for MediaPipe processing
+    imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = hands.process(imgRGB)
 
-            if x < lmList[8][0]<x+w and y < lmList[8][1] < y+h:
-                cv2.rectangle(img, button.pos, (x + w, y + h),
-                              (0, 255, 255), cv2.FILLED)
-                cv2.putText(img, button.text, (x + 20, y + 65),
-                            cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
-                l, _, _ = detector.findDistance(8,12, img, draw=False)
-                print(l)
+    # Draw keyboard buttons
+    img = draw_buttons(img, buttonList)
 
-                if l < 25:
-                    keyboard.press(button.text)
-                    cv2.rectangle(img, button.pos, (x + w, y + h),
-                                  (0, 255, 0), cv2.FILLED)
-                    cv2.putText(img, button.text, (x + 20, y + 65),
-                                cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
-                    final_text += button.text
-                    sleep(0.20)
+    if results.multi_hand_landmarks:
+        for handLms in results.multi_hand_landmarks:
+            lmList = []
+            for id, lm in enumerate(handLms.landmark):
+                h, w, c = img.shape
+                cx, cy = int(lm.x * w), int(lm.y * h)
+                lmList.append([id, cx, cy])
 
-    cv2.rectangle(img, (25,350), (700, 450),
-                  (255, 255, 255), cv2.FILLED)
-    cv2.putText(img, final_text, (60, 425),
-                cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
+            # Check for fingertip (index finger tip is id 8)
+            if lmList:
+                for button in buttonList:
+                    x, y = button.pos
+                    w, h = button.size
 
-    # cv2.rectangle(img, (100,100), (200,200),
-    #               (100, 255, 0), cv2.FILLED)
-    # cv2.putText(img, 'Q', (120,180), cv2.FONT_HERSHEY_PLAIN, 5,
-    #             (0, 0, 0), 5)
+                    if x < lmList[8][1] < x + w and y < lmList[8][2] < y + h:
+                        cv2.rectangle(img, button.pos, (x + w, y + h), (0, 255, 255), cv2.FILLED)
+                        cv2.putText(img, button.text, (x + 20, y + 65), cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
 
-    # img = mybutton.draw(img)
-    cv2.imshow("output", img)
-    cv2.waitKey(1)
+                        # Measure the distance between index finger and middle finger (id 12)
+                        finger_distance = np.linalg.norm(np.array([lmList[8][1], lmList[8][2]]) - 
+                                                         np.array([lmList[12][1], lmList[12][2]]))
+
+                        # If the distance is small, consider it a click
+                        if finger_distance < 30:
+                            keyboard.press(button.text)
+                            cv2.rectangle(img, button.pos, (x + w, y + h), (0, 255, 0), cv2.FILLED)
+                            cv2.putText(img, button.text, (x + 20, y + 65), cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
+                            final_text += button.text
+                            sleep(0.3)  # Small delay to avoid multiple key presses
+
+            mp_draw.draw_landmarks(img, handLms, mp_hands.HAND_CONNECTIONS)
+
+    # Display the typed text
+    cv2.rectangle(img, (25, 350), (700, 450), (255, 255, 255), cv2.FILLED)
+    cv2.putText(img, final_text, (60, 425), cv2.FONT_HERSHEY_PLAIN, 4, (0, 0, 0), 4)
+
+    # Show the image
+    cv2.imshow("Virtual Keyboard", img)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
